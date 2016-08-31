@@ -1,8 +1,8 @@
-# libsmallwater_event
+# libswevent
 
 ----------
 
-- libsmallwater_event is a light weight net event library. 
+- libswevent is a light weight net event library. 
 - Support events : socket read write, timer, signal, prepare, check.
 - Similar to libevent, redesign a event library just because we want more simple to use, more efficient and less memory.
 - Currently supporting platform: linux.
@@ -12,4 +12,4 @@
     make PREFIX=/usr/local install
 
 # usage
-    g++ yourcode.cpp -lsmallwater_event
+    g++ yourcode.cpp -lswevent
