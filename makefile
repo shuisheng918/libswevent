@@ -1,5 +1,5 @@
-TARGET_SHARE = libsmallwater_event.so
-TARGET_STATIC = libsmallwater_event.a
+TARGET_SHARE = libswevent.so
+TARGET_STATIC = libswevent.a
 INSTALL_DIR:=/usr/local
 ifdef PREFIX
 INSTALL_DIR:=$(PREFIX)
