@@ -1,25 +1,14 @@
 TARGET_SHARE = libswevent.so
 TARGET_STATIC = libswevent.a
 INSTALL_DIR:=/usr/local
-ifdef PREFIX
-INSTALL_DIR:=$(PREFIX)
-endif
-SRC_DIR=.
-OBJ_DIR=./objs
-MKDIR := mkdir -p
-CC := gcc
+CC := cc
 AR := ar
-CFLAGS := -W -Wall -O0 -g -fPIC
-LDFLAGS := -shared -O0
-SRCS := sw_event.c sw_log.c
-basename_srcs := $(notdir $(SRCS))
-basename_objs := $(patsubst %.c,%.o,$(basename_srcs) )
-OBJS := $(addprefix $(OBJ_DIR)/, $(basename_objs))
+CFLAGS := -Wall -O0 -g -fPIC
+LDFLAGS := -shared
+SRCS := sw_event.c sw_log.c sw_util.o
+OBJS := sw_event.o sw_log.o sw_util.o
 
-$(OBJ_DIR)/%.o : $(SRC_DIR)/%.c
-	$(CC) -c -o $@ $(CFLAGS) $<
-
-all: $(OBJ_DIR) $(TARGET_SHARE) $(TARGET_STATIC)
+all: $(TARGET_SHARE) $(TARGET_STATIC)
 
 $(TARGET_SHARE): $(OBJS) 
 	$(CC) -o $@ $(LDFLAGS) $(OBJS)
@@ -27,8 +16,12 @@ $(TARGET_SHARE): $(OBJS)
 $(TARGET_STATIC): $(OBJS) 
 	$(AR) -cr $(TARGET_STATIC) $(OBJS)
 
-$(OBJ_DIR):
-	$(MKDIR) $(OBJ_DIR)
+sw_event.o : sw_event.c
+	$(CC) -c -o $@ $(CFLAGS) $<
+sw_log.o : sw_log.c
+	$(CC) -c -o $@ $(CFLAGS) $<
+sw_util.o : sw_util.c
+	$(CC) -c -o $@ $(CFLAGS) $<
 
 install:
 	install -d $(INSTALL_DIR)/{include,lib}
@@ -36,5 +29,5 @@ install:
 	install $(TARGET_SHARE) $(TARGET_STATIC) $(INSTALL_DIR)/lib
 
 clean:
-	rm -rf $(OBJ_DIR)
+	rm -f $(OBJS)
 	rm -f $(TARGET_SHARE) $(TARGET_STATIC)

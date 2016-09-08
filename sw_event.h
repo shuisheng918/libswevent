@@ -3,13 +3,15 @@
  * Support events : socket read write, timer, signal, prepare, check.
  * Similar to libevent, redesign a event library just because we want
  * more simple to use, more efficient and less memory.
- * Currently supporting platform: linux
+ * Currently supporting platform: linux(use epoll), Windows(use select), 
+ * FreeBSD(use kqueue), MAC(use kqueue, have not test).
  * Copyright (c) 2016 ShuishengWu <shuisheng918@gmail.com>
  */
 #ifndef INC_SW_EVENT_H
 #define INC_SW_EVENT_H
 
 #include <stddef.h>
+#include "sw_util.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -50,7 +52,7 @@ void sw_ev_context_free(struct sw_ev_context *ctx);
  *          arg - user data pointer.
  * return:  0 success, -1 failed.
  * note:    Socket's read and write event share the same callback function and user data pointer.
- *          You should make the socket nonblock.
+ *          You should make the socket non-block.
  */
 int  sw_ev_io_add(struct sw_ev_context *ctx, int fd, int what_events,
                   void (*callback)(int fd, int events, void *arg),
@@ -97,7 +99,7 @@ int  sw_ev_timer_del(struct sw_ev_context *ctx, struct sw_ev_timer *timer);
  * signal operations. Suggest processing signals in only one thread's sw_ev_context, block signals
  * in other threads when you using this event library in multi-thread environment.
  * param:   ctx - operated sw_ev_context pointer which return by sw_ev_context_new().
- *          sig_no - sinal number, the legal value range is [0, 64).
+ *          sig_no - signal number, the legal value range is [0, 64).
  *          callback - It will be called when signal reach. callback's first argument is the
  *          signal number, second argument is the user data pointer.
  *          arg - user data pointer.
@@ -153,7 +155,7 @@ int  sw_ev_loop(struct sw_ev_context *ctx);
 void sw_ev_loop_exit(struct sw_ev_context *ctx);
 
 /**
- * Set the memeory manager function instead std dynamic memory manager function.
+ * Set the memory manager function instead std dynamic memory manager function.
  */
 void sw_ev_set_memory_func(void* (*malloc_func)(size_t),
                            void  (*free_func)(void *),
@@ -173,7 +175,7 @@ enum /* log level */
 typedef void (*sw_log_func_t)(int log_level, const char * msg);
 
 /**
- * Defaultly, log function is null, the messages will print to stdout.
+ * By default, log function is null, the messages will print to stdout.
  * You can set your own log function use this interface.
  */
 void sw_set_log_func(sw_log_func_t logfunc);

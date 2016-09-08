@@ -9,8 +9,8 @@ extern sw_log_func_t log_func;
 static void sw_log(int log_level, const char *fmt, va_list ap)
 {
     char buf[4096];
-    vsnprintf(buf, sizeof(buf), fmt, ap);
     const char * level_str = "--?--";
+    vsnprintf(buf, sizeof(buf), fmt, ap);
     if (NULL != log_func)
     {
         log_func(log_level, buf);

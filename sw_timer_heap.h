@@ -3,6 +3,10 @@
 
 #include "sw_event_internal.h"
 
+#if defined(_WIN32) && !defined(__cplusplus)
+#define inline __inline
+#endif
+
 extern void* (*sw_ev_malloc)(size_t);
 void  (*sw_ev_free)(void *);
 void* (*sw_ev_realloc)(void *, size_t);
@@ -144,7 +148,7 @@ void sw_timer_heap_shift_down_(sw_timer_heap_t* heap, unsigned hole_index, sw_ev
 {
     unsigned min_child = 2 * (hole_index + 1);
     while(min_child <= heap->size)
-	{
+    {
         if (min_child == heap->size || sw_timer_heap_elem_greater(heap->timers[min_child], heap->timers[min_child - 1]))
         {
             min_child -= 1;
@@ -156,7 +160,7 @@ void sw_timer_heap_shift_down_(sw_timer_heap_t* heap, unsigned hole_index, sw_ev
         (heap->timers[hole_index] = heap->timers[min_child])->index_in_heap = hole_index;
         hole_index = min_child;
         min_child = 2 * (hole_index + 1);
-	}
+    }
     sw_timer_heap_shift_up_(heap, hole_index,  e);
 }
 

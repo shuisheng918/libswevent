@@ -1,6 +1,7 @@
 #ifndef INC_SW_EVENT_INTERNAL_H
 #define INC_SW_EVENT_INTERNAL_H
 
+#include <stdint.h>
 
 typedef struct sw_ev_timer
 {
@@ -40,7 +41,17 @@ typedef struct sw_ev_context
 {
     int64_t  current_time; /* ms */
     int      running;
-    int      epoll_fd;
+#ifdef _WIN32
+    fd_set	read_set;
+    fd_set	write_set;
+    fd_set	except_set;
+#elif defined(__APPLE__) || defined(__FreeBSD__)
+    int 	kqueue_fd;
+#elif defined(__linux__)
+    int     epoll_fd;
+#else
+#error Not support current operating system yet.
+#endif
     sw_ev_io_t * io_events;
     int          io_events_count;
     struct sw_timer_heap * timer_heap;
