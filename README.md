@@ -11,7 +11,7 @@
     make
     make install
 
-Default install path is /usr/local, you can modify variable 'INSTALL_DIR' in makefile.
+Default install path is /usr/, you can modify variable 'INSTALL_DIR' in makefile.
 
 # usage
     g++ yourcode.cpp -lswevent
