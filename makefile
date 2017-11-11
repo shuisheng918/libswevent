@@ -1,6 +1,6 @@
 TARGET_SHARE = libswevent.so
 TARGET_STATIC = libswevent.a
-INSTALL_DIR:=/opt/libswevent
+INSTALL_DIR:=/usr
 CC := cc
 AR := ar
 CFLAGS := -Wall -O0 -g -fPIC
