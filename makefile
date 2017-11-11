@@ -1,6 +1,6 @@
 TARGET_SHARE = libswevent.so
 TARGET_STATIC = libswevent.a
-INSTALL_DIR:=/usr
+INSTALL_DIR:=/opt/libswevent
 CC := cc
 AR := ar
 CFLAGS := -Wall -O0 -g -fPIC
@@ -25,7 +25,7 @@ sw_util.o : sw_util.c
 
 install:
 	install -d $(INSTALL_DIR)/{include,lib}
-	install sw_event.h sw_util.h $(INSTALL_DIR)/include
+	install sw_event.h $(INSTALL_DIR)/include
 	install $(TARGET_SHARE) $(TARGET_STATIC) $(INSTALL_DIR)/lib
 
 clean:

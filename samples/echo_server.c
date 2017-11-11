@@ -217,9 +217,9 @@ void OnAcceptReady(int fd, int events, void * arg)
     {
         addrlen = sizeof(addr);  
         client = accept(fd, (struct sockaddr *) &addr, &addrlen);
-        printf("fd=%d, client=%d\n", fd, client);
         if (client >= 0)
         {
+            printf("fd=%d, client=%d\n", fd, client);
             sw_ev_setnonblock(client);
             pSession = (struct Session *)malloc(sizeof(struct Session));
             assert(pSession);

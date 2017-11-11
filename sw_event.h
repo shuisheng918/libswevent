@@ -11,7 +11,6 @@
 #define INC_SW_EVENT_H
 
 #include <stddef.h>
-#include "sw_util.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -175,8 +174,10 @@ enum /* log level */
 typedef void (*sw_log_func_t)(int log_level, const char * msg);
 
 /**
- * By default, log function is null, the messages will print to stdout.
- * You can set your own log function use this interface.
+ * Defaultly, log function is null, the log messages will be droped.
+ * You can set your own log function cathed debug message. But please
+ * to make sure your log function is thread-safe when you use libswevent
+ * in multithread. 
  */
 void sw_set_log_func(sw_log_func_t logfunc);
 

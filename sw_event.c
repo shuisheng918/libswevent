@@ -33,7 +33,7 @@ enum { SW_EV_NSIG = NSIG };
 
 sw_log_func_t log_func = NULL;
 
-void sw_set_log_function(sw_log_func_t logfunc)
+void sw_set_log_func(sw_log_func_t logfunc)
 {
     log_func = logfunc;
 }
