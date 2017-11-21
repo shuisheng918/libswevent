@@ -11,6 +11,8 @@
 #define INC_SW_EVENT_H
 
 #include <stddef.h>
+#include <stdint.h>
+
 
 #ifdef __cplusplus
 extern "C"
@@ -23,6 +25,82 @@ enum /* event type */
     SW_EV_WRITE   = 0x02, /* write ready event */
 };
 
+enum
+{
+    SW_EV_MAX_PREPARE = 10,
+    SW_EV_MAX_CHECK = 10,
+};
+
+typedef struct sw_ev_timer
+{
+    void (*callback)(void *arg);
+    void *arg;
+    int64_t next_expire_time;  /* ms */
+    unsigned  index_in_heap; 
+    int       interval;  /* ms */
+} sw_ev_timer_t;
+
+typedef struct sw_ev_io
+{
+    void (*callback)(int fd, int events, void *arg);
+    void *arg;
+    int  events;
+} sw_ev_io_t;
+
+typedef struct sw_ev_signal
+{
+    void (*callback)(int sig_no, void *arg);
+    void *arg;
+} sw_ev_signal_t;
+
+/**
+ * prepare events' callback is called before poll-wait. 
+ * (poll-wait may be epoll_wait, kevent or select).
+ */
+typedef struct sw_ev_prepare
+{
+    void (*callback)(void* arg);
+    void *arg;
+    struct sw_ev_prepare *next;
+} sw_ev_prepare_t;
+
+/**
+ * check events' callback is called after all io events processed since last poll-wait.
+ * (poll-wait may be epoll_wait, kevent or select)
+ */
+typedef struct sw_ev_check
+{
+    void (*callback)(void* arg);
+    void *arg;
+    struct sw_ev_check *next;
+} sw_ev_check_t;
+
+typedef struct sw_ev_context
+{
+    int64_t  current_time; /* ms */
+    int      running;
+#ifdef _WIN32
+    fd_set	read_set;
+    fd_set	write_set;
+    fd_set	except_set;
+#elif defined(__APPLE__) || defined(__FreeBSD__)
+    int 	kqueue_fd;
+#elif defined(__linux__)
+    int     epoll_fd;
+#else
+#error Not support current operating system yet.
+#endif
+    struct sw_ev_io * io_events;
+    int               io_events_count;
+    struct sw_timer_heap * timer_heap;
+    struct sw_ev_prepare * prepares[SW_EV_MAX_PREPARE];
+    int                    prepares_count;
+    struct sw_ev_check   * checks[SW_EV_MAX_CHECK];
+    int                    checks_count;
+    int                    signal_pipe[2];
+    struct sw_ev_signal  * signal_events; /* elements count: NSIG */
+} sw_ev_context_t;
+
 /**
  * Alloc and initialize a sw_ev_context, then return it.
  * return:  NULL failed, else success.
@@ -32,13 +110,13 @@ enum /* event type */
  *          destroy sw_ev_context with sw_ev_context_free() api prevent memeory leak when
  *          you needn't it. 
  */
-struct sw_ev_context * sw_ev_context_new();
+sw_ev_context_t * sw_ev_context_new();
 
 /**
  * Destroy and free the sw_ev_context.
  * param:   ctx - sw_ev_context you want destroy.
  */
-void sw_ev_context_free(struct sw_ev_context *ctx);
+void sw_ev_context_free(sw_ev_context_t *ctx);
 
 /**
  * Add a socket io event to ctx.
@@ -53,7 +131,7 @@ void sw_ev_context_free(struct sw_ev_context *ctx);
  * note:    Socket's read and write event share the same callback function and user data pointer.
  *          You should make the socket non-block.
  */
-int  sw_ev_io_add(struct sw_ev_context *ctx, int fd, int what_events,
+int  sw_ev_io_add(sw_ev_context_t *ctx, int fd, int what_events,
                   void (*callback)(int fd, int events, void *arg),
                   void *arg);
 
@@ -64,7 +142,7 @@ int  sw_ev_io_add(struct sw_ev_context *ctx, int fd, int what_events,
  *         what_events - The bits or of SW_EV_READ and SW_EV_WRITE.
  * return:  0 success, -1 failed.
  */
-int  sw_ev_io_del(struct sw_ev_context *ctx, int fd, int what_events);
+int  sw_ev_io_del(sw_ev_context_t *ctx, int fd, int what_events);
 
 /**
  * Add a timer event to the ctx.
@@ -78,8 +156,8 @@ int  sw_ev_io_del(struct sw_ev_context *ctx, int fd, int what_events);
  * return:  not NULL success, NULL failed.
  * note:    You must use sw_ev_timer_del() to stop timer and prevent memory leak.
  */
-struct sw_ev_timer * 
-sw_ev_timer_add(struct sw_ev_context *ctx, int timeout_ms,
+sw_ev_timer_t * 
+sw_ev_timer_add(sw_ev_context_t *ctx, int timeout_ms,
                 void (*callback)(void *arg),
                 void *arg);
 
@@ -89,7 +167,7 @@ sw_ev_timer_add(struct sw_ev_context *ctx, int timeout_ms,
  *          timer - timer pointer returned by sw_ev_timer_add().
  * return:  0 success, -1 failed.
  */
-int  sw_ev_timer_del(struct sw_ev_context *ctx, struct sw_ev_timer *timer);
+int  sw_ev_timer_del(sw_ev_context_t *ctx, sw_ev_timer_t *timer);
 
 /**
  * Add a signal event to ctx.
@@ -104,7 +182,7 @@ int  sw_ev_timer_del(struct sw_ev_context *ctx, struct sw_ev_timer *timer);
  *          arg - user data pointer.
  * return:  0 success, -1 failed.
  */
-int  sw_ev_signal_add(struct sw_ev_context *ctx, int sig_no,
+int  sw_ev_signal_add(sw_ev_context_t *ctx, int sig_no,
                       void (*callback)(int sig_no, void *arg),
                       void *arg);
 
@@ -115,43 +193,60 @@ int  sw_ev_signal_add(struct sw_ev_context *ctx, int sig_no,
  *          sig_no - sinal number, the legal value range is [0, 64).
  * return:  0 success, -1 failed.
  */
-int  sw_ev_signal_del(struct sw_ev_context *ctx, int sig_no);
+int  sw_ev_signal_del(sw_ev_context_t *ctx, int sig_no);
 
 /**
- * Set the prepare function before poll wait.
- * param:   ctx - operated sw_ev_context pointer which return by sw_ev_context_new().
- *          callback - It will be called after timers processed and before io poll 
- *          wait. callback's argument is the user data pointer. It will disable
- *          prepare event when callback is null.
+ * Add a prepare event to ctx.
+ * param:   ctx - Operated sw_ev_context pointer which return by sw_ev_context_new().
+ *          callback - It will be called after timers processed and before poll-wait.
  *          arg - user data pointer.
+ * return:  not NULL success, NULL failed.
+ * note:    You must use sw_ev_prepare_del() to stop prepare event and prevent memory leak.
  */
-void sw_ev_prepare_set(struct sw_ev_context *ctx,
-                       void (*callback)(void* arg),
-                       void *arg);
+sw_ev_prepare_t *
+sw_ev_prepare_add(sw_ev_context_t *ctx,
+                    void (*callback)(void* arg),
+                    void *arg);
 
 /**
- * Set the check function after poll wait.
- * param:   ctx - operated sw_ev_context pointer which return by sw_ev_context_new().
- *          callback - It will be called after io poll wait and io events
- *          processed. callback's argument is the user data pointer. It will disable
- *          check event when callback is null.
- *          arg - user data pointer.
+ * Delete a prepare event from ctx.
+ * param:   ctx - Operated sw_ev_context pointer which return by sw_ev_context_new().
+ *          prepare - prepare event pointer returned by sw_ev_prepare_add().
  */
-void sw_ev_check_set(struct sw_ev_context *ctx,
-                     void (*callback)(void* arg),
-                     void *arg);
+void sw_ev_prepare_del(sw_ev_context_t *ctx, sw_ev_prepare_t *prepare);
+
+/**
+ * Add a check event to ctx.
+ * param:   ctx - operated sw_ev_context pointer which return by sw_ev_context_new().
+ *          callback - It will be called after all io events processed since last poll-wait.
+ *          processed.
+ *          arg - user data pointer.
+ * return:  not NULL success, NULL failed.
+ * note:    You must use sw_ev_check_del() to stop check event and prevent memory leak.
+ */
+sw_ev_check_t *
+sw_ev_check_add(sw_ev_context_t *ctx,
+                void (*callback)(void* arg),
+                void *arg);
+
+/**
+ * Delete a check event from ctx.
+ * param:   ctx - Operated sw_ev_context pointer which return by sw_ev_context_new().
+ *          check - check event pointer returned by sw_ev_check_add().
+ */
+void sw_ev_check_del(sw_ev_context_t *ctx, sw_ev_check_t *check);
 
 /**
  * Run event loop on the ctx and process events one by one.
  * param:   ctx - operated sw_ev_context pointer which return by sw_ev_context_new().
  */
-int  sw_ev_loop(struct sw_ev_context *ctx);
+int  sw_ev_loop(sw_ev_context_t *ctx);
 
 /**
  * Exit the event loop.
  * param:   ctx - operated sw_ev_context pointer which return by sw_ev_context_new().
  */
-void sw_ev_loop_exit(struct sw_ev_context *ctx);
+void sw_ev_loop_exit(sw_ev_context_t *ctx);
 
 /**
  * Set the memory manager function instead std dynamic memory manager function.

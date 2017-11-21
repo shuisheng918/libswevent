@@ -16,7 +16,6 @@
 #include <string.h>
 #include <errno.h>
 #include <signal.h>
-#include "sw_event_internal.h"
 #include "sw_timer_heap.h"
 #include "sw_log.h"
 #include "sw_util.h"
@@ -38,7 +37,7 @@ void sw_set_log_func(sw_log_func_t logfunc)
     log_func = logfunc;
 }
 
-static volatile struct sw_ev_context * sw_ev_current_signal_context = NULL;
+static volatile sw_ev_context_t * sw_ev_current_signal_context = NULL;
 
 static void
 sw_ev_signal_handler_(int sig_no)
@@ -57,7 +56,7 @@ static void
 sw_ev_sinal_reach_(int fd, int events, void * arg)
 {
     int ret;
-    struct sw_ev_context *ctx = (struct sw_ev_context*)arg;
+    sw_ev_context_t *ctx = (sw_ev_context_t *)arg;
     
     unsigned char signal_buf[512];
     while (1)
@@ -99,7 +98,7 @@ sw_ev_sinal_reach_(int fd, int events, void * arg)
     }
 }
 
-struct sw_ev_context * 
+sw_ev_context_t * 
 sw_ev_context_new()
 {
     sw_ev_context_t *ctx = (sw_ev_context_t *)sw_ev_malloc(sizeof(sw_ev_context_t));
@@ -124,10 +123,10 @@ sw_ev_context_new()
         goto oh_no;
     }
     sw_timer_heap_ctor(ctx->timer_heap);
-    ctx->prepare.callback = NULL;
-    ctx->prepare.arg = NULL;
-    ctx->check.callback = NULL;
-    ctx->check.arg = NULL;
+    memset(ctx->prepares, 0, (sizeof(sw_ev_prepare_t *) * SW_EV_MAX_PREPARE));
+    ctx->prepares_count = 0;
+    memset(ctx->checks, 0, (sizeof(sw_ev_check_t *) * SW_EV_MAX_CHECK));
+    ctx->checks_count = 0;
 #ifdef _WIN32
     FD_ZERO(&ctx->read_set);
     FD_ZERO(&ctx->write_set);
@@ -194,15 +193,14 @@ oh_no:
 }
 
 void 
-sw_ev_context_free(struct sw_ev_context *ctx)
+sw_ev_context_free(sw_ev_context_t *ctx)
 {
     if (NULL != ctx)
     {
-        unsigned i = 0;
+        unsigned i;
         if (ctx == sw_ev_current_signal_context)
         {
-            int i = 0;
-            for (; i < SW_EV_NSIG; ++i)
+            for (i = 0; i < SW_EV_NSIG; ++i)
             {
                 sw_ev_signal_del(ctx, i);
             }
@@ -218,8 +216,21 @@ sw_ev_context_free(struct sw_ev_context *ctx)
 #else
         if (ctx->epoll_fd != -1)    close(ctx->epoll_fd);
 #endif
-        
-        for (; i < ctx->timer_heap->size; ++i)
+        for (i = 0; i < ctx->prepares_count; ++i)
+        {
+            if (ctx->prepares[i])
+            {
+                sw_ev_free(ctx->prepares[i]);
+            }
+        }
+        for (i = 0; i < ctx->checks_count; ++i)
+        {
+            if (ctx->checks[i])
+            {
+                sw_ev_free(ctx->checks[i]);
+            }
+        }
+        for (i = 0; i < ctx->timer_heap->size; ++i)
         {
             sw_ev_free(ctx->timer_heap->timers[i]);
         }
@@ -254,12 +265,12 @@ expand_io_events_(sw_ev_context_t *ctx, int max_fd)
  * process the expired timers, and return next poll wait time(ms).
  */
 static int
-process_timers_(struct sw_ev_context *ctx)
+process_timers_(sw_ev_context_t *ctx)
 {
     int64_t curtime = ctx->current_time;
     sw_timer_heap_t * heap = ctx->timer_heap;
     int next_wait_time = 0;
-    struct sw_ev_timer * top_timer = sw_timer_heap_top(heap);
+    sw_ev_timer_t * top_timer = sw_timer_heap_top(heap);
     while (NULL != top_timer && curtime >= top_timer->next_expire_time)
     {
         if (NULL != top_timer->callback)
@@ -285,7 +296,7 @@ process_timers_(struct sw_ev_context *ctx)
 
 #ifdef _WIN32
 int
-sw_ev_io_add(struct sw_ev_context *ctx, int fd, int what_events,
+sw_ev_io_add(sw_ev_context_t *ctx, int fd, int what_events,
              void (*callback)(int fd, int events, void *arg),
              void *arg)
 {
@@ -327,7 +338,7 @@ sw_ev_io_add(struct sw_ev_context *ctx, int fd, int what_events,
 }
 
 int
-sw_ev_io_del(struct sw_ev_context *ctx, int fd, int what_events)
+sw_ev_io_del(sw_ev_context_t *ctx, int fd, int what_events)
 {
     sw_ev_io_t *ioevent;
     if (fd < 0 || fd >= ctx->io_events_count)
@@ -384,7 +395,7 @@ static void push_to_result_fd_list(struct sw_ev_fd_list * fd_list, int fd, int w
 }
 
 int
-sw_ev_loop(struct sw_ev_context *ctx)
+sw_ev_loop(sw_ev_context_t *ctx)
 {
     fd_set read_set, write_set, except_set;
     int nfds = 0;
@@ -398,12 +409,15 @@ sw_ev_loop(struct sw_ev_context *ctx)
     {
         ctx->current_time = sw_ev_gettime_ms();
         wait_time = process_timers_(ctx);
+        for (i = 0; i < ctx->prepares_count; ++i)
+        {
+            if (NULL != ctx->prepares[i]->callback)
+            {
+                ctx->prepares[i]->callback(ctx->prepares[i]->arg);
+            }
+        }
         tv.tv_sec = wait_time / 1000;
         tv.tv_usec = wait_time % 1000 * 1000;
-        if (NULL != ctx->prepare.callback)
-        {
-            ctx->prepare.callback(ctx->prepare.arg);
-        }
         memcpy(&read_set, &ctx->read_set, sizeof(fd_set));
         memcpy(&write_set, &ctx->write_set, sizeof(fd_set));
         memcpy(&except_set, &ctx->except_set, sizeof(fd_set));
@@ -442,16 +456,19 @@ sw_ev_loop(struct sw_ev_context *ctx)
                 ioevent->callback(fd, res_fd_list.events[i], ioevent->arg);
             }
         }
-        if (NULL != ctx->check.callback)
+        for (i = 0; i < ctx->checks_count; ++i)
         {
-            ctx->check.callback(ctx->check.arg);
+            if (NULL != ctx->checks[i]->callback)
+            {
+                ctx->checks[i]->callback(ctx->checks[i]->arg);
+            }
         }
     }
     return 0;
 }
 #elif defined(__APPLE__) || defined(__FreeBSD__)
 int
-sw_ev_io_add(struct sw_ev_context *ctx, int fd, int what_events,
+sw_ev_io_add(sw_ev_context_t *ctx, int fd, int what_events,
              void (*callback)(int fd, int events, void *arg),
              void *arg)
 {
@@ -496,7 +513,7 @@ sw_ev_io_add(struct sw_ev_context *ctx, int fd, int what_events,
 }
 
 int
-sw_ev_io_del(struct sw_ev_context *ctx, int fd, int what_events)
+sw_ev_io_del(sw_ev_context_t *ctx, int fd, int what_events)
 {
     if (fd < 0 || fd >= ctx->io_events_count)
     {
@@ -533,7 +550,7 @@ sw_ev_io_del(struct sw_ev_context *ctx, int fd, int what_events)
 }
 
 int
-sw_ev_loop(struct sw_ev_context *ctx)
+sw_ev_loop(sw_ev_context_t *ctx)
 {
     struct kevent ready_events[1024];
     int nfds = 0;
@@ -545,9 +562,12 @@ sw_ev_loop(struct sw_ev_context *ctx)
     {
         ctx->current_time = sw_ev_gettime_ms();
         wait_time = process_timers_(ctx);
-        if (NULL != ctx->prepare.callback)
+        for (i = 0; i < ctx->prepares_count; ++i)
         {
-            ctx->prepare.callback(ctx->prepare.arg);
+            if (NULL != ctx->prepares[i]->callback)
+            {
+                ctx->prepares[i]->callback(ctx->prepares[i]->arg);
+            }
         }
         timeout.tv_sec = wait_time / 1000;
         timeout.tv_nsec = wait_time % 1000 * 1000000;
@@ -578,9 +598,12 @@ sw_ev_loop(struct sw_ev_context *ctx)
                 ioevent->callback(ev_fd, what_events, ioevent->arg);
             }
         }
-        if (NULL != ctx->check.callback)
+        for (i = 0; i < ctx->checks_count; ++i)
         {
-            ctx->check.callback(ctx->check.arg);
+            if (NULL != ctx->checks[i]->callback)
+            {
+                ctx->checks[i]->callback(ctx->checks[i]->arg);
+            }
         }
     }
     return 0;
@@ -588,7 +611,7 @@ sw_ev_loop(struct sw_ev_context *ctx)
 
 #else /* linux */
 int
-sw_ev_io_add(struct sw_ev_context *ctx, int fd, int what_events,
+sw_ev_io_add(sw_ev_context_t *ctx, int fd, int what_events,
              void (*callback)(int fd, int events, void *arg),
              void *arg)
 {
@@ -635,7 +658,7 @@ sw_ev_io_add(struct sw_ev_context *ctx, int fd, int what_events,
 }
 
 int
-sw_ev_io_del(struct sw_ev_context *ctx, int fd, int what_events)
+sw_ev_io_del(sw_ev_context_t *ctx, int fd, int what_events)
 {
     if (fd < 0 || fd >= ctx->io_events_count)
     {
@@ -683,7 +706,7 @@ sw_ev_io_del(struct sw_ev_context *ctx, int fd, int what_events)
 }
 
 int
-sw_ev_loop(struct sw_ev_context *ctx)
+sw_ev_loop(sw_ev_context_t *ctx)
 {
     struct epoll_event ready_events[4096];
     int nfds = 0;
@@ -693,9 +716,12 @@ sw_ev_loop(struct sw_ev_context *ctx)
     {
         ctx->current_time = sw_ev_gettime_ms();
         wait_time = process_timers_(ctx);
-        if (NULL != ctx->prepare.callback)
+        for (i = 0; i < ctx->prepares_count; ++i)
         {
-            ctx->prepare.callback(ctx->prepare.arg);
+            if (NULL != ctx->prepares[i]->callback)
+            {
+                ctx->prepares[i]->callback(ctx->prepares[i]->arg);
+            }
         }
         nfds = epoll_wait(ctx->epoll_fd, ready_events, sizeof(ready_events)/sizeof(struct epoll_event),  wait_time);
         if (nfds == -1)
@@ -728,25 +754,28 @@ sw_ev_loop(struct sw_ev_context *ctx)
                 ioevent->callback(ev_fd, what_events, ioevent->arg);
             }
         }
-        if (NULL != ctx->check.callback)
+        for (i = 0; i < ctx->checks_count; ++i)
         {
-            ctx->check.callback(ctx->check.arg);
+            if (NULL != ctx->checks[i]->callback)
+            {
+                ctx->checks[i]->callback(ctx->checks[i]->arg);
+            }
         }
     }
     return 0;
 }
 #endif /* _WIN32 */
 
-struct sw_ev_timer * 
-sw_ev_timer_add(struct sw_ev_context *ctx, int timeout_ms,
+sw_ev_timer_t * 
+sw_ev_timer_add(sw_ev_context_t *ctx, int timeout_ms,
                 void (*callback)(void *arg),
                 void *arg)
 {
-    struct sw_ev_timer *timer = sw_ev_malloc(sizeof(struct sw_ev_timer));
     if (timeout_ms <= 0)
     {
         return NULL;
     }
+    sw_ev_timer_t *timer = sw_ev_malloc(sizeof(sw_ev_timer_t));
     if (NULL == timer)
     {
         return NULL;
@@ -765,7 +794,7 @@ sw_ev_timer_add(struct sw_ev_context *ctx, int timeout_ms,
 }
 
 int
-sw_ev_timer_del(struct sw_ev_context *ctx, struct sw_ev_timer *timer)
+sw_ev_timer_del(sw_ev_context_t *ctx, sw_ev_timer_t *timer)
 {
     if (NULL == timer)
     {
@@ -780,7 +809,7 @@ sw_ev_timer_del(struct sw_ev_context *ctx, struct sw_ev_timer *timer)
 }
 
 int
-sw_ev_signal_add(struct sw_ev_context *ctx, int sig_no,
+sw_ev_signal_add(sw_ev_context_t *ctx, int sig_no,
                  void (*callback)(int sig_no, void *arg),
                  void *arg)
 {
@@ -805,7 +834,7 @@ sw_ev_signal_add(struct sw_ev_context *ctx, int sig_no,
 }
 
 int
-sw_ev_signal_del(struct sw_ev_context *ctx, int sig_no)
+sw_ev_signal_del(sw_ev_context_t *ctx, int sig_no)
 {
     if (sig_no < 0 || sig_no >= SW_EV_NSIG)
     {
@@ -828,24 +857,103 @@ sw_ev_signal_del(struct sw_ev_context *ctx, int sig_no)
     return 0;
 }
 
-void sw_ev_prepare_set(struct sw_ev_context *ctx,
+sw_ev_prepare_t *
+sw_ev_prepare_add(sw_ev_context_t *ctx,
                   void (*callback)(void* arg),
                   void *arg)
 {
-    ctx->prepare.callback = callback;
-    ctx->prepare.arg = arg;
+    if (ctx->prepares_count >= SW_EV_MAX_PREPARE)
+    {
+        return NULL;
+    }
+    sw_ev_prepare_t * prepare = sw_ev_malloc(sizeof(sw_ev_prepare_t));
+    if (NULL == prepare)
+    {
+        return NULL;
+    }
+    prepare->callback = callback;
+    prepare->arg = arg;
+    ctx->prepares[ctx->prepares_count++] = prepare;
+    return prepare;
 }
 
-void sw_ev_check_set(struct sw_ev_context *ctx,
+void sw_ev_prepare_del(sw_ev_context_t *ctx, sw_ev_prepare_t *prepare)
+{
+    if (NULL != prepare)
+    {
+        int i = 0;
+        int found = 0;
+        for (; i < ctx->prepares_count; ++i)
+        {
+            if (ctx->prepares[i] == prepare)
+            {
+                sw_ev_free(ctx->prepares[i]);
+                found = 1;
+                break;
+            }
+        }
+        for (; i < ctx->prepares_count - 1; ++i)
+        {
+            ctx->prepares[i] = ctx->prepares[i+1];
+        }
+        if (found)
+        {
+            ctx->prepares[ctx->prepares_count - 1] = NULL;
+            --ctx->prepares_count;
+        }
+    }
+}
+
+sw_ev_check_t *
+sw_ev_check_add(sw_ev_context_t *ctx,
                 void (*callback)(void* arg),
                 void *arg)
 {
-    ctx->check.callback = callback;
-    ctx->check.arg = arg;
+    if (ctx->checks_count >= SW_EV_MAX_CHECK)
+    {
+        return NULL;
+    }
+    sw_ev_check_t * check = sw_ev_malloc(sizeof(sw_ev_check_t));
+    if (NULL == check)
+    {
+        return NULL;
+    }
+    check->callback = callback;
+    check->arg = arg;
+    ctx->checks[ctx->checks_count++] = check;
+    return check;
+
+}
+
+void sw_ev_check_del(sw_ev_context_t *ctx, sw_ev_check_t *check)
+{
+    if (NULL != check)
+    {
+        int i = 0;
+        int found = 0;
+        for (; i < ctx->checks_count; ++i)
+        {
+            if (ctx->checks[i] == check)
+            {
+                sw_ev_free(ctx->checks[i]);
+                found = 1;
+                break;
+            }
+        }
+        for (; i < ctx->checks_count - 1; ++i)
+        {
+            ctx->checks[i] = ctx->checks[i+1];
+        }
+        if (found)
+        {
+            ctx->checks[ctx->checks_count - 1] = NULL;
+            --ctx->checks_count;
+        }
+    }
 }
 
 void
-sw_ev_loop_exit(struct sw_ev_context *ctx)
+sw_ev_loop_exit(sw_ev_context_t *ctx)
 {
     ctx->running = 0;
 }

@@ -1,7 +1,7 @@
 #ifndef INC_SW_TIMER_HEAP_H
 #define INC_SW_TIMER_HEAP_H
 
-#include "sw_event_internal.h"
+#include "sw_event.h"
 
 #if defined(_WIN32) && !defined(__cplusplus)
 #define inline __inline
@@ -83,7 +83,7 @@ int sw_timer_heap_push(sw_timer_heap_t* heap, sw_ev_timer_t* e)
     return 0;
 }
 
-struct sw_ev_timer* sw_timer_heap_pop(sw_timer_heap_t* heap)
+sw_ev_timer_t * sw_timer_heap_pop(sw_timer_heap_t* heap)
 {
     if(heap->size)
     {
