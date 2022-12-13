@@ -1,6 +1,7 @@
 # libswevent
 
 ----------
+Copyright (c) 2022~2023 SmallwaterWu <smallwaterwu@163.com>
 
 - libswevent is a light weight net event library. 
 - Support events : socket read write, timer, signal, prepare, check.
